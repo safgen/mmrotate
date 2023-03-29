@@ -5,8 +5,11 @@ from timm.models.layers import trunc_normal_
 import numpy as np
 from torch.nn.functional import instance_norm
 from torch.nn.modules.batchnorm import BatchNorm2d
-from NormalCell import NormalCell
-from ReductionCell import ReductionCell
+from .NormalCell import NormalCell
+from .ReductionCell import ReductionCell
+from mmcv.runner import BaseModule
+from mmrotate.models.builder import ROTATED_BACKBONES
+import e2cnn.nn as enn
 
 class PatchEmbedding(nn.Module):
     def __init__(self, inter_channel=32, out_channels=48, img_size=None):
@@ -81,7 +84,8 @@ class BasicLayer(nn.Module):
             x = nc(x)
         return x
 
-class ViTAE_Window_NoShift_basic(nn.Module):
+@ROTATED_BACKBONES.register_module()
+class ViTAE_Window_NoShift_basic(BaseModule):
     def __init__(self, img_size=224, in_chans=3, stages=4, embed_dims=64, token_dims=64, downsample_ratios=[4, 2, 2, 2], kernel_size=[7, 3, 3, 3], 
                 RC_heads=[1, 1, 1, 1], NC_heads=4, dilations=[[1, 2, 3, 4], [1, 2, 3], [1, 2], [1, 2]],
                 RC_op='cat', RC_tokens_type=['performer', 'transformer', 'transformer', 'transformer'], NC_tokens_type='transformer',
@@ -163,9 +167,14 @@ class ViTAE_Window_NoShift_basic(nn.Module):
         return torch.mean(x, 1)
 
     def forward(self, x):
+        # x = enn.GeometricTensor(x, self.in_type)
         x = self.forward_features(x)
-        x = self.head(x)
-        return x
+        # x = self.head(x)
+
+        if len(x) == 1:
+            return x[0]
+        else:
+            return tuple(x)
     
     # def train(self, mode=True, tag='default'):
     #     r"""Sets the module in training mode.

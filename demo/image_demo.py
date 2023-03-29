@@ -27,7 +27,7 @@ def parse_args():
 
 def main(args):
     # build the model from a config file and a checkpoint file
-    model = init_detector(args.config, args.checkpoint, device=args.device)
+    model = init_detector(args.config, device=args.device)
     # test a single image
     result = inference_detector(model, args.img)
     # show the results
