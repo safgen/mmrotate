@@ -190,15 +190,26 @@ class NormalCell(nn.Module):
         else:
             self.SE = nn.Identity()
 
-    def forward(self, x):
+    def forward(self, x, H, W):
+
+        # 输入为1D特征
 
         b, n, c = x.shape
         shortcut = x
         if self.tokens_type == 'swin':
-            H, W = self.img_size, self.img_size
-            assert n == self.img_size * self.img_size, "input feature has wrong size"
+            # 采用swin的窗口attention，要转为2D特征
+            #H, W = self.img_size, self.img_size
+            #assert n == self.img_size * self.img_size, "input feature has wrong size"
             x = self.norm1(x)
             x = x.view(b, H, W, c)
+
+            # pad feature maps to multiples of window size
+            pad_l = pad_t = 0
+            pad_r = (self.window_size - W % self.window_size) % self.window_size
+            pad_b = (self.window_size - H % self.window_size) % self.window_size
+            x = torch.nn.functional.pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
+            _, Hp, Wp, _ = x.shape
+
             # cyclic shift
             if self.shift_size > 0:
                 shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
@@ -212,15 +223,21 @@ class NormalCell(nn.Module):
 
             # merge windows
             attn_windows = attn_windows.view(-1, self.window_size, self.window_size, c)
-            shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
+            shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)  # B H' W' C
 
             # reverse cyclic shift
             if self.shift_size > 0:
                 x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
             else:
                 x = shifted_x
+
+            if pad_r > 0 or pad_b > 0:
+                x = x[:, :H, :W, :].contiguous()
+
+            # swin attention后转为1D特征
             x = x.view(b, H * W, c)
         else:
+            # 采用普通的transformer attention或performer attention，直接用1D特征
             x = self.gamma1 * self.attn(self.norm1(x))
 
         if self.class_token:
@@ -230,13 +247,15 @@ class NormalCell(nn.Module):
             x = shortcut + self.drop_path(self.gamma1 * x)
             x[:, 1:] = x[:, 1:] + convX
         else:
-            wh = int(math.sqrt(n))
-            convX = self.drop_path(self.gamma2 * self.PCM(shortcut.view(b, wh, wh, c).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous().view(b, n, c))
+            #wh = int(math.sqrt(n))
+            # shortcut过PCM再变成1D特征
+            convX = self.drop_path(self.gamma2 * self.PCM(shortcut.view(b, H, W, c).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous().view(b, n, c))
+            # 三路合并
             x = shortcut + self.drop_path(self.gamma1 * x) + convX
             # x = x + convX
         x = x + self.drop_path(self.gamma3 * self.mlp(self.norm2(x)))
         x = self.SE(x)
-        return x
+        return x, H, W
 
 def get_sinusoid_encoding(n_position, d_hid):
     ''' Sinusoid position encoding table '''

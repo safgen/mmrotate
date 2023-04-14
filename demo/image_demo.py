@@ -1,6 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from argparse import ArgumentParser
-
+import torch
 from mmdet.apis import inference_detector, init_detector, show_result_pyplot
 
 import mmrotate  # noqa: F401
@@ -27,7 +27,13 @@ def parse_args():
 
 def main(args):
     # build the model from a config file and a checkpoint file
-    model = init_detector(args.config, device=args.device)
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(device)
+    model = init_detector(args.config, device=device)
+    # print(next(model.parameters()) )
+    # model= torch.nn.DataParallel(model)
+    # model.to(device)
     # test a single image
     result = inference_detector(model, args.img)
     # show the results

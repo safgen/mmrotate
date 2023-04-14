@@ -49,6 +49,8 @@ class Token_performer(nn.Module):
         # SM(x, y) = E_w[exp(w^T x - |x|/2) exp(w^T y - |y|/2)]
         # therefore return exp(w^Tx - |x|/2)/sqrt(m)
 
+        # 通道维平方和后在通道维重复m倍：B,H,N,m
+
         xd = ((x * x).sum(dim=-1, keepdim=True)).repeat(1, 1, 1, self.m) / 2
 
         # BHNhs * Hmhs -> BHNm

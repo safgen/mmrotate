@@ -1,7 +1,13 @@
 import torch
 import mmrotate
 from mmrotate.models.backbones import ViTAE_Window_NoShift_basic
-from mmrotate.models.necks import  ReFPN
+from mmdet.models.necks import  FPN
+from mmrotate.models.necks import ReFPN
+from mmrotate.models.roi_heads.bbox_heads import RotatedBBoxHead
+import e2cnn.nn as enn
+from mmrotate.models.utils import (build_enn_divide_feature, build_enn_norm_layer,
+                     build_enn_trivial_feature, ennAvgPool, ennConv,
+                     ennMaxPool, ennReLU, ennTrivialConv)
 
 def _cfg(url='', **kwargs):
     return {
@@ -27,9 +33,10 @@ def ViTAE_Window_NoShift_12_basic_stages4_14(**kwargs): # adopt performer for to
     
     return model
 
-def get_random_image():
+
+def get_random_image(B=2,H=224,W=224):
     # Create a random tensor of size (3, 224, 224) with values between 0 and 1
-    image_tensor = torch.rand(2, 3, 224, 224)
+    image_tensor = torch.rand(B, 3, H, W)
 
     # Alternatively, create a random tensor of size (224, 224, 3) with values between 0 and 1
     # image_tensor = torch.rand(224, 224, 3).permute(2, 0, 1)
@@ -41,6 +48,14 @@ def get_random_image():
     image_tensor = image_tensor.float()
 
     return image_tensor
+
+def printing_fn(y, print_str="", shape=True):
+    print(print_str)
+    for i in range(len(y)):
+        if shape:
+            print(y[i].shape)
+        
+
 
 
 backbone = ViTAE_Window_NoShift_12_basic_stages4_14()
@@ -55,11 +70,34 @@ checkpoint = torch.load(checkpoint_path)
 # load the model state dictionary from the checkpoint file
 backbone.load_state_dict(checkpoint['model'], strict=False)
 
-x = get_random_image()
+x = get_random_image(B=4)
 x = backbone(x)
 
-neck = ReFPN(in_channels=[512, 512], out_channels=256, num_outs=5)
+printing_fn(x, print_str="after transformer")
+in_channels = [64, 128, 256, 512]
 
+# x_geom = []
+# for i in range (len(x)):
+#     in_type = build_enn_divide_feature(len(x[i][0]))
+#     geom = enn.GeometricTensor(x[i], in_type)
+#     x_geom.append(geom) 
+
+neck = ReFPN(in_channels=in_channels, out_channels=256, num_outs=4)
+# in_type = build_enn_divide_feature()
+# x = enn.GeometricTensor(x, in_type)
 x = neck(x)
 
-print(len(x[0]))
+
+printing_fn(x, print_str="neck")
+head = RotatedBBoxHead(num_classes=51)
+
+
+# y=[]
+# for i in range(len(x)):
+#     print(i, x[i].shape)
+#     y = [head(feat) for feat in x]
+
+y = head(x[-1])
+printing_fn(y, print_str="y")
+
+# print(len(x), len(x[1]), len(x[2][0]), len(x[0][0][0]), len(x[0][0][0][0]))
