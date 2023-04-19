@@ -192,12 +192,12 @@ class NormalCell(nn.Module):
 
     def forward(self, x, H, W):
 
-        # 输入为1D特征
+        # input is 1D feature
 
         b, n, c = x.shape
         shortcut = x
         if self.tokens_type == 'swin':
-            # 采用swin的窗口attention，要转为2D特征
+            # using swin's window attention, need to convert to 2D feature
             #H, W = self.img_size, self.img_size
             #assert n == self.img_size * self.img_size, "input feature has wrong size"
             x = self.norm1(x)
@@ -215,6 +215,7 @@ class NormalCell(nn.Module):
                 shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
             else:
                 shifted_x = x
+
             # partition windows
             x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
             x_windows = x_windows.view(-1, self.window_size * self.window_size, c)  # nW*B, window_size*window_size, C
@@ -234,10 +235,10 @@ class NormalCell(nn.Module):
             if pad_r > 0 or pad_b > 0:
                 x = x[:, :H, :W, :].contiguous()
 
-            # swin attention后转为1D特征
+            # convert 2D feature back to 1D feature after Swin attention
             x = x.view(b, H * W, c)
         else:
-            # 采用普通的transformer attention或performer attention，直接用1D特征
+            # using normal transformer attention or performer attention, use 1D feature directly
             x = self.gamma1 * self.attn(self.norm1(x))
 
         if self.class_token:
@@ -247,10 +248,9 @@ class NormalCell(nn.Module):
             x = shortcut + self.drop_path(self.gamma1 * x)
             x[:, 1:] = x[:, 1:] + convX
         else:
-            #wh = int(math.sqrt(n))
-            # shortcut过PCM再变成1D特征
+            # shortcut through PCM and then convert to 1D feature
             convX = self.drop_path(self.gamma2 * self.PCM(shortcut.view(b, H, W, c).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous().view(b, n, c))
-            # 三路合并
+            # three-way merge
             x = shortcut + self.drop_path(self.gamma1 * x) + convX
             # x = x + convX
         x = x + self.drop_path(self.gamma3 * self.mlp(self.norm2(x)))

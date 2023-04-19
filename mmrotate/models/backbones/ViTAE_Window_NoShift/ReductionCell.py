@@ -23,13 +23,13 @@ class PRM(nn.Module):
         self.outSize = img_size // downsample_ratio
 
         if share_weights:
-            # 多个共享权重扩张率不同的扩张卷积
+            # Multiple dilated convolutions with different dilation rates that share weights
             self.convolution = nn.Conv2d(in_channels=in_chans, out_channels=embed_dim, kernel_size=self.kernel_size, \
                 stride=self.stride, padding=3*dilations[0]//2, dilation=dilations[0])
 
         else:
             self.convs = nn.ModuleList()
-            # 多个并行的扩张卷积
+            # Multiple parallel dilated convolutions with different dilation rates
             for dilation in self.dilations:
                 padding = math.ceil(((self.kernel_size-1)*dilation + 1 - self.stride) / 2)
                 self.convs.append(nn.Sequential(*[nn.Conv2d(in_channels=in_chans, out_channels=embed_dim, kernel_size=self.kernel_size, \
@@ -44,7 +44,7 @@ class PRM(nn.Module):
     def forward(self, x):
         B, C, W, H = x.shape
         if self.share_weights:
-            # 多个共享权重扩张率不同的扩张卷积
+            # Multiple dilated convolutions with different dilation rates that share weights
             padding = math.ceil(((self.kernel_size-1)*self.dilations[0] + 1 - self.stride) / 2)
             y = nn.functional.conv2d(x, weight=self.convolution.weight, bias=self.convolution.bias, \
                 stride=self.downsample_ratio, padding=padding, dilation=self.dilations[0]).unsqueeze(dim=-1)
@@ -54,18 +54,18 @@ class PRM(nn.Module):
                     stride=self.downsample_ratio, padding=padding, dilation=self.dilations[i]).unsqueeze(dim=-1)
                 y = torch.cat((y, _y), dim=-1)
         else:
-            # 多个并行的扩张卷积
+            # Multiple parallel dilated convolutions with different dilation rates
             y = self.convs[0](x).unsqueeze(dim=-1)
             for i in range(1, len(self.dilations)):
                 _y = self.convs[i](x).unsqueeze(dim=-1)
                 y = torch.cat((y, _y), dim=-1)
         B, C, W, H, N = y.shape
-        # 将这些卷积的结果合并，变成1D特征
+        # Merge the results of these convolutions into 1D features
         if self.op == 'sum':
-            # 加和合并
+            # Summing and merging
             y = y.sum(dim=-1).flatten(2).permute(0,2,1).contiguous()
         elif self.op == 'cat':
-            # 级联合并
+            # Concatenating and merging
             y = y.permute(0,4,1,2,3).flatten(3).reshape(B, N*C, W*H).permute(0,2,1).contiguous()
         else:
             raise NotImplementedError('no such operation: {} for multi-levels!'.format(self.op))
@@ -91,7 +91,7 @@ class ReductionCell(nn.Module):
         self.relative_pos = relative_pos
         PCMStride = []
         residual = downsample_ratios // 2
-        # downsample_ratios=4的时候，PCMstride为[2,2,1]，降采样4倍
+        # When downsample_ratios=4, PCMstride is [2,2,1], reducing the resolution by a factor of 4.
         for _ in range(3):
             PCMStride.append((residual > 0) + 1)
             residual = residual // 2
@@ -104,17 +104,17 @@ class ReductionCell(nn.Module):
             tokens_type = 'transformer'
             self.outSize = self.outSize // downsample_ratios
             downsample_ratios = 1
-        # PCM 三个卷积，扩张率2，2，1，前两个降尺寸
+        # PCM: three convolution layers with dilation rates of 2, 2, and 1, respectively, with the first two layers down-sampling the resolution.
         self.PCM = nn.Sequential(
                         nn.Conv2d(in_chans, embed_dims, kernel_size=(3, 3), stride=PCMStride[0], padding=(1, 1), groups=group),  # the 1st convolution
                         nn.BatchNorm2d(embed_dims),
                         nn.SiLU(inplace=True),
-                        nn.Conv2d(embed_dims, embed_dims, kernel_size=(3, 3), stride=PCMStride[1], padding=(1, 1), groups=group),  # the 1st convolution
+                        nn.Conv2d(embed_dims, embed_dims, kernel_size=(3, 3), stride=PCMStride[1], padding=(1, 1), groups=group),  # the 2nd convolution
                         nn.BatchNorm2d(embed_dims),
                         nn.SiLU(inplace=True),
-                        nn.Conv2d(embed_dims, token_dims, kernel_size=(3, 3), stride=PCMStride[2], padding=(1, 1), groups=group),  # the 1st convolution
+                        nn.Conv2d(embed_dims, token_dims, kernel_size=(3, 3), stride=PCMStride[2], padding=(1, 1), groups=group),  # the 3rd convolution
                     )
-        ## PRM做了降采样，降采样率由扩张卷积的扩张率决定
+        ## PRM performs down-sampling, with the down-sampling ratio determined by the dilation rates of the expandable convolution.
         self.PRM = PRM(img_size=img_size, kernel_size=kernel_size, downsample_ratio=downsample_ratios, dilations=self.dilations,
             in_chans=in_chans, embed_dim=embed_dims, share_weights=share_weights, op=op)
         self.outSize = self.outSize // downsample_ratios
@@ -127,12 +127,12 @@ class ReductionCell(nn.Module):
             self.attn = None
             self.PCM = None
         elif tokens_type == 'transformer':
-            # 普通的vision transformer
+            # Ordinary vision transformer
             self.attn = Token_transformer(dim=in_chans, in_dim=token_dims, num_heads=num_heads, mlp_ratio=mlp_ratio, drop=drop, 
-                                          attn_drop=attn_drop, drop_path=drop_path, gamma=gamma, init_values=init_values)
+                                        attn_drop=attn_drop, drop_path=drop_path, gamma=gamma, init_values=init_values)
         elif tokens_type == 'swin':
-            # 加了个是否使用相对位置编码的控制，另外窗口大小是始终固定的，无shift操作
-            # token_dim是swint输出的维度
+            # Add a control to use relative position encoding or not. The window size is fixed and there is no shift operation.
+            # token_dim is the dimension output by swint
             self.attn = SwinTransformerBlock(in_dim=in_chans, out_dim=token_dims, input_resolution=(self.img_size//self.downsample_ratios, self.img_size//self.downsample_ratios), 
                                             num_heads=num_heads, mlp_ratio=mlp_ratio, drop=drop,
                                             attn_drop=attn_drop, drop_path=drop_path, window_size=window_size, shift_size=0, relative_pos=relative_pos)
@@ -149,7 +149,7 @@ class ReductionCell(nn.Module):
         else:
             self.SE = nn.Identity()
 
-        self.num_patches = (img_size // 2) * (img_size // 2)  # there are 3 sfot split, stride are 4,2,2 seperately
+        self.num_patches = (img_size // 2) * (img_size // 2)  # there are 3 soft splits, strides are 4, 2, 2 respectively
 
     def forward(self, x, H, W):
         if len(x.shape) < 4:
@@ -163,15 +163,15 @@ class ReductionCell(nn.Module):
         shortcut = x
         PRM_x, _ = self.PRM(x)
         H, W = H // self.downsample_ratios, W // self.downsample_ratios
-        # PRM的输出为B, N, D*C, D:扩张卷积并行分支数
-        # PRM做了降采样，降采样率由扩张卷积的扩张率决定
+        # PRM's output is B, N, D*C, D: the number of parallel branches of the expanded convolution
+        # PRM performs downsampling, and the downsampling rate is determined by the expansion rate of the convolution
         if self.tokens_type == 'swin':
             pass
             B, N, C = PRM_x.shape
             #H, W = self.img_size // self.downsample_ratios, self.img_size // self.downsample_ratios
             b, _, c = PRM_x.shape
             assert N == H*W
-            # 获得了多尺度特征，LN后直接采用固定窗口的MHSA
+            # Get multi-scale features, normalize and use fixed-window MHSA directly
             x = self.attn.norm1(PRM_x)
             x = x.view(B, H, W, C)
 
@@ -182,23 +182,26 @@ class ReductionCell(nn.Module):
             x = torch.nn.functional.pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
             _, Hp, Wp, _ = x.shape
 
-            x_windows = window_partition(x, self.window_size) # 对特征划分窗口
+            x_windows = window_partition(x, self.window_size) # Partition features into windows
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)
-            attn_windows = self.attn.attn(x_windows, mask=self.attn.attn_mask)  # nW*B, window_size*window_size, C， 进行窗口attention
-            attn_windows = attn_windows.view(-1, self.window_size, self.window_size, self.token_dims)# 窗口级特征1D变2D
-            shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)  # B H' W' C， 将窗口特征恢复成普通特征
+            attn_windows = self.attn.attn(x_windows, mask=self.attn.attn_mask)  # nW*B, window_size*window_size, C， window-level attention.
+            attn_windows = attn_windows.view(-1, self.window_size, self.window_size, self.token_dims) # Convert window-level features from 1D to 2D
+            shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp) # Reverse window features to restore the original feature dimensions
             x = shifted_x
 
+            # If there is padding, remove it
             if pad_r > 0 or pad_b > 0:
                 x = x[:, :H, :W, :].contiguous()
 
-            # token_dim是swint输出的维度
+            # 'token_dim' is the output dimension of SwinT
             x = x.view(B, H * W, self.token_dims)
 
+            # Pass shortcut tensor through PCM layer
             convX = self.PCM(shortcut)
-            # B,C,H,W->B,H,W,C-> B,H*W,C->B,L,C
+            # Convert tensor shape to match 'x' tensor shape for addition
             convX = convX.permute(0, 2, 3, 1).view(*x.shape).contiguous()
-            # 融合PCM的特征和WMSA的特征
+
+            # Combine PCM and WMSA features
             x = x + self.attn.drop_path(convX * self.gamma2)
             # x = shortcut + self.attn.drop_path(x)
             # x = x + self.attn.drop_path(self.attn.mlp(self.attn.norm2(x)))
@@ -206,14 +209,13 @@ class ReductionCell(nn.Module):
         else:
             if self.attn is None:
                 return PRM_x
-            convX = self.PCM(shortcut)
-            # performer和transformer都是全局的，不需要分窗口
-            x = self.attn.attn(self.attn.norm1(PRM_x))
-            convX = convX.permute(0, 2, 3, 1).view(*x.shape).contiguous()
-            x = x + self.attn.drop_path(convX * self.gamma2)
-            x = x + self.attn.drop_path(self.gamma3 * self.attn.mlp(self.attn.norm2(x)))
-        # transformer完跟个SE，也可能没有
-        x = self.SE(x)
+            convX = self.PCM(shortcut) # Perform Convolution operation on shortcut
+            x = self.attn.attn(self.attn.norm1(PRM_x)) # Apply attention on PRM_x features
+            convX = convX.permute(0, 2, 3, 1).view(*x.shape).contiguous() # Reshape Convolution output to (B, H*W, C)
+            x = x + self.attn.drop_path(convX * self.gamma2) # Fuse PCM features with attention output
+            x = x + self.attn.drop_path(self.gamma3 * self.attn.mlp(self.attn.norm2(x))) # Apply drop-path and MLP on attention output
+
+            x = self.SE(x) # Apply Squeeze-and-Excitation on features
 
         return x, H, W
 
