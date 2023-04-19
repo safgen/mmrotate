@@ -71,30 +71,30 @@ class BasicLayer(nn.Module):
                 RC_op='cat', RC_tokens_type='performer', NC_tokens_type='transformer', RC_group=1, NC_group=64, NC_depth=2, dpr=0.1, mlp_ratio=4., qkv_bias=True, 
                 qk_scale=None, drop=0, attn_drop=0., norm_layer=nn.LayerNorm, class_token=False, gamma=False, init_values=1e-4, SE=False, window_size=7, relative_pos=False):
         super().__init__()
-        self.img_size = img_size
-        self.in_chans = in_chans
-        self.embed_dims = embed_dims
-        self.token_dims = token_dims
-        self.downsample_ratios = downsample_ratios
-        self.out_size = self.img_size // self.downsample_ratios
-        self.RC_kernel_size = kernel_size
-        self.RC_heads = RC_heads
-        self.NC_heads = NC_heads
-        self.dilations = dilations
-        self.RC_op = RC_op
-        self.RC_tokens_type = RC_tokens_type
-        self.RC_group = RC_group
-        self.NC_group = NC_group
-        self.NC_depth = NC_depth
-        self.relative_pos = relative_pos
+        self.img_size = img_size  # input image size
+        self.in_chans = in_chans  # number of input channels
+        self.embed_dims = embed_dims  # number of embedding dimensions
+        self.token_dims = token_dims  # number of token dimensions
+        self.downsample_ratios = downsample_ratios  # downsample ratio
+        self.out_size = self.img_size // self.downsample_ratios  # output feature map size
+        self.RC_kernel_size = kernel_size  # kernel size of the reduction cell
+        self.RC_heads = RC_heads  # number of heads in the reduction cell
+        self.NC_heads = NC_heads  # number of heads in the normal cell
+        self.dilations = dilations  # dilations in the reduction cell
+        self.RC_op = RC_op  # operation used in the reduction cell
+        self.RC_tokens_type = RC_tokens_type  # type of tokens used in the reduction cell
+        self.RC_group = RC_group  # group size for group normalization in the reduction cell
+        self.NC_group = NC_group  # group size for group normalization in the normal cell
+        self.NC_depth = NC_depth  # number of normal cells in the layer
+        self.relative_pos = relative_pos  # whether to use relative positional encoding
         if RC_tokens_type == 'stem':
-            # 直接用俩3*3 stride=2的卷积作下采样
+            # use two 3x3 convolutions with stride=2 for downsampling
             self.RC = PatchEmbedding(inter_channel=token_dims//2, out_channels=token_dims, img_size=img_size)
         elif downsample_ratios > 1:
             self.RC = ReductionCell(img_size, in_chans, embed_dims, token_dims, downsample_ratios, kernel_size,
                             RC_heads, dilations, op=RC_op, tokens_type=RC_tokens_type, group=RC_group, gamma=gamma, init_values=init_values, SE=SE, relative_pos=relative_pos, window_size=window_size)
         else:
-            self.RC = nn.Identity()
+            self.RC = nn.Identity()  # identity function if no downsampling
         self.NC = nn.ModuleList([
             NormalCell(token_dims, NC_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale, drop=drop, attn_drop=attn_drop,
                        drop_path=dpr[i] if isinstance(dpr, list) else dpr, norm_layer=norm_layer, class_token=class_token, group=NC_group, tokens_type=NC_tokens_type,
@@ -102,7 +102,7 @@ class BasicLayer(nn.Module):
         for i in range(NC_depth)])
 
     def forward(self, x, H, W):
-        # 每个layer先过下采样block，然后跟上多个normel block
+        # First pass through the downsampling block in each layer, then follow it with multiple normal blocks
         x, H, W = self.RC(x, H, W)
         for nc in self.NC:
             x, H, W = nc(x, H, W)
@@ -162,7 +162,7 @@ class ViTAE_Window_NoShift_basic(nn.Module):
 
         self.pos_drop = nn.Dropout(p=drop_rate)
         depth = np.sum(self.NC_depth)
-        # 生成长度为block总数，从0到 drop_path_rate的等差数列
+        # generate an arithmetic sequence of length block total number, ranging from 0 to drop_path_rate
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         Layers = []
         for i in range(stages):
@@ -174,7 +174,7 @@ class ViTAE_Window_NoShift_basic(nn.Module):
                 mlp_ratio=self.mlp_ratio[i], qkv_bias=self.qkv_bias[i], qk_scale=self.qk_scale[i], drop=self.drop[i], attn_drop=self.attn_drop[i],
                 norm_layer=self.norm_layer[i], gamma=gamma, init_values=init_values, SE=SE, window_size=window_size, relative_pos=relative_pos)
             )
-            img_size = img_size // self.downsample_ratios[i] # 每个layer的输入尺寸
+            img_size = img_size // self.downsample_ratios[i] # input size of each layer
             in_chans = self.tokens_dims[i]
         self.layers = nn.ModuleList(Layers)
 
